@@ -1,4 +1,4 @@
-%Amplitude Spetral Density Helper version 1.0.6x (Matlab compatible)
+%Amplitude Spetral Density Helper version 1.0.7 (Marmota)
 %
 %Author email: c.houyuan@mail.scut.edu.cn
 %
@@ -12,6 +12,7 @@
 % -- [freq, ASD] = ASD_H(X, dt, Win_Length, overlap, Win_func);
 % -- [freq, ASD] = ASD_H(X, dt, Win_Length, overlap, Win_func, plot_option);
 % -- [freq, ASD] = ASD_H(X, dt, Win_Length, overlap, Win_func, alpha, plot_option);
+%
 %
 %    X, dt	一维数组及其时间间隔，这两个参数作为时序信号的基本输入。
 %
@@ -112,14 +113,26 @@
 %   输出：
 %   freq	时域下的频率矢量，以Hz为量纲；
 %    ASD	均方根功率谱密度矢量，与freq逐一对应，以X/sqrt(Hz)为量纲，这里X意思是时序数据X(t)本身的量纲。
-
+%
+%Marmota本本更新:
+%    新增平滑模式，使用示例如下，
+%
+% -- 假设时序数据为X，采样时间为60s，这里推荐使用kaiser窗（alpha参数默认为10），
+%
+%	使用默认的平滑参数，保留低频的个别点，在高频按对数分区并求平均
+% -- [freq, ASD] = ASD_H(X, 60, "ks", 10, "smooth", "b-");
+%
+%	使用默认的平滑参数，保留低频的200个点，在高频按对数作1000个分区并求平均
+% -- [freq, ASD] = ASD_H(X, 60, "ks", 10, "smooth", [200 1000], "b-");
+%
 
 
 function [freq,ASD]=ASD_H(X, dt, varargin)
 
 Win_Spec="hanning";
 L=length(X);
-firstnumeric=1;quickview=0;Win_recov=2;Win_specified=0;alpha_specified=0;
+firstnumeric=1;quickview=0;Win_recov=2;alpha_specified=0;smooth=0;smpara_specified=0;
+Twin_specified=0;overlap_specified=0;smpara=[];skip=0;nidx=[];
 T_winWidth=(L-1)*dt;
 overlap=0;
 tn=(1:L);
@@ -136,30 +149,60 @@ end
 
 if nargin>2
 	for pf=1:length(varargin)
+		if(skip)
+			skip=0;
+			continue;
+		end
 		arg=varargin{pf};
 		if(ischar(arg))
 			arg=lower(arg);
 			switch (arg)
 			 case {"hann","hn","hp","hm","rect","none","box","ft","bm","exp","kb","pcos","ks","tr","norm","gauss","cgauss","cnorm","nt","pt"}
-			  Win_Spec=arg;Win_specified=1;
+			  Win_Spec=arg;
+			  if(pf<length(varargin))
+			  	if(~ischar(varargin{pf+1}))
+			  		alpha=varargin{pf+1};
+			  		alpha_specified=1;
+			  		skip=1;
+			  		continue;
+			  	end
+			  end
 			 case {"hanning","hamming","rectangular","flattop","blackman","exponential","poisson","triangular","bartlett","bohman","hann-poisson","kaiser","kaiser-bessel","gaussian","welch","nuttall","planck-taper"}
-			  Win_Spec=arg;Win_specified=1;
+			  Win_Spec=arg;
+			  if(pf<length(varargin))
+			  	if(~ischar(varargin{pf+1}))
+			  		alpha=varargin{pf+1};
+			  		alpha_specified=1;
+			  		skip=1;
+			  		continue;
+			  	end
+			  end
+			 case {"smooth","sm","pinghua","guanghua"}
+			  smooth=1;
+			  if(pf<length(varargin))
+			  	if(~ischar(varargin{pf+1}))
+			  		smpara=varargin{pf+1};
+			  		smpara_specified=1;
+			  		skip=1;
+			  		continue;
+			  	end
+			  end			  	
 			 otherwise
 			  plot_option=arg;
 			  quickview=1;
 			end
 		else
-			if (Win_specified)
-			 alpha=arg;alpha_specified=1;
-			 Win_specified=0;
-			else
-			  if (firstnumeric)
-			   T_winWidth=arg;
-			   firstnumeric=0;
-			  else
-			   overlap=arg;
-			  end
+			if (~Twin_specified)
+				T_winWidth=arg;
+				Twin_specified=1;
+				continue;
 			end
+			if (~overlap_specified)
+				overlap=arg;
+				overlap_specified=1;
+				continue;
+			end
+			
 		end
 	end
 end
@@ -285,6 +328,38 @@ freq=1/dt*(0:(N_win/2))/N_win;
 freq=freq(2:end-1);
 if size(X,1)>1
 freq=freq';
+end
+
+if smooth
+	fprintf("Smoothing mode activated, please ensure your data longer than size of 100.\n");
+	freqs=zeros(size(freq));ASDs=zeros(size(ASD));nReserved=99;
+	if smpara_specified
+		if length(smpara)>1
+			nReserved=smpara(1);
+			nLogar=smpara(2);
+		else
+			nLogar=smpara;
+		end
+	else
+		nLogar=900;
+	end
+	nidx=[(1:nReserved),floor(logspace(log10(nReserved+1),log10(length(freq)),nLogar+1))];
+	nsid=1;
+	for pf=2:length(nidx)-1
+		if nidx(pf-1)+2>nidx(pf+1)
+			continue;
+		end
+		nSegm=(nidx(pf-1)+1:nidx(pf+1)-1);
+		freqs(nsid)=sum(freq(nSegm))/length(nSegm);
+		ASDs(nsid)=sum(ASD(nSegm))/length(nSegm);
+		nsid=nsid+1;
+	end
+	freq=freqs(1:nsid-1);
+	ASD=ASDs(1:nsid-1);
+	clear freqs;
+	clear ASDs;
+	divfreq=freq(nReserved+1);
+	fprintf("Linear Segment: %d\nLogari Segment: %d\ndivided at freq: %e Hz\n\n",nReserved,nsid-nReserved-1,divfreq);
 end
 
 if quickview
